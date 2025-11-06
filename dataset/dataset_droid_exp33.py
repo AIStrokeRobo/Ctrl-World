@@ -272,6 +272,11 @@ class Dataset_mix(Dataset):
         except RuntimeError as exc:
             raise RuntimeError(f"Failed to concatenate latent videos for episode {sample['episode_id']}: {exc}") from exc
         data['latent'] = latent.float()
+        view_count = len(latent_entries)
+        data['view_count'] = view_count
+        if len(cam_latents) > 0:
+            data['latent_view_height'] = cam_latents[0].shape[2]
+            data['latent_view_width'] = cam_latents[0].shape[3]
 
         # prepare action cond data
         action = state_matrix[state_id]

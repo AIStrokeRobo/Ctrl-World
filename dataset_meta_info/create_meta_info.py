@@ -100,9 +100,9 @@ if __name__ == "__main__":
 
     from argparse import ArgumentParser
     parser = ArgumentParser()
-    parser.add_argument('--droid_output_path', type=str, default='dataset_example/droid_subset')
+    parser.add_argument('--droid_output_path', type=str, default='dataset_example/galaxea')
     # dataset_name
-    parser.add_argument('--dataset_name', type=str, default='droid_subset')
+    parser.add_argument('--dataset_name', type=str, default='galaxea')
     parser.add_argument('--debug', action='store_true')
     args = parser.parse_args()
     
