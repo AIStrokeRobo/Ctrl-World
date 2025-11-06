@@ -16,12 +16,12 @@ class wm_args:
     # dataset parameters
     # raw data
     dataset_root_path = "dataset_example"
-    dataset_names = 'droid_subset'
+    dataset_names = 'galaxea'
     # meta info
-    dataset_meta_info_path = 'dataset_meta_info' #'/cephfs/cjyyj/code/video_evaluation/exp_cfg'#'dataset_meta_info'
+    dataset_meta_info_path = 'dataset_meta_info'
     dataset_cfgs = dataset_names
     prob=[1.0]
-    annotation_name='annotation' #'annotation_all_skip1'
+    annotation_name='annotation'
     num_workers=4
     down_sample=3 # downsample 15hz to 5hz
     skip_step = 1
@@ -29,10 +29,10 @@ class wm_args:
 
     # logs parameters
     debug = False
-    tag = 'doird_subset'
+    tag = 'galaxea'
     output_dir = f"model_ckpt/{tag}"
     wandb_run_name = tag
-    wandb_project_name = "droid_example"
+    wandb_project_name = "galaxea"
 
 
     # training parameters
@@ -62,7 +62,7 @@ class wm_args:
     # num history and num future predictions
     num_frames= 5
     num_history = 6
-    action_dim = 7
+    action_dim = 18
     text_cond = True
     frame_level_cond = True
     his_cond_zero = False
@@ -72,7 +72,7 @@ class wm_args:
 
     ########################### rollout args ############################
     # policy
-    task_type: str = "pickplace" # choose from ['pickplace', 'towel_fold', 'wipe_table', 'tissue', 'close_laptop','tissue','drawer','stack']
+    task_type: str = "galaxea" # choose from ['galaxea','pickplace', 'towel_fold', 'wipe_table', 'tissue', 'close_laptop','tissue','drawer','stack', 'replay', 'keyboard']
     gripper_max_dict = {'replay':1.0, 'pickplace':0.75, 'towel_fold':0.95, 'wipe_table':0.95, 'tissue':0.97, 'close_laptop':0.95,'drawer':0.75,'stack':0.75,}
     ##############################################################################
     policy_type = 'pi05' # choose from ['pi05', 'pi0', 'pi0fast']
@@ -82,7 +82,7 @@ class wm_args:
     interact_num = 12 # number of interactions (each interaction contains pred_step steps)
 
     # wm
-    data_stat_path = 'dataset_meta_info/droid/stat.json'
+    data_stat_path = 'dataset_meta_info/galaxea/stat.json'
     val_model_path = ckpt_path
     history_idx = [0,0,-12,-9,-6,-3]
 
@@ -167,6 +167,14 @@ class wm_args:
             self.val_id = ['0012','0013']
             self.start_idx = [5] * len(self.val_id)
             self.instruction = ["stack the blue block on the red block"] * len(self.val_id)
-        
+
+        elif self.task_type == "galaxea":
+            self.val_dataset_dir = os.path.join(self.dataset_root_path, self.dataset_names.split('+')[0])
+            self.val_id = []
+            self.start_idx = []
+            self.instruction = []
+            self.task_name = "Rollouts_galaxea"
+
         else:
             raise ValueError(f"Unknown task type: {self.task_type}")
+

@@ -18,16 +18,56 @@ import json
 import numpy as np
 from scipy.spatial.transform import Rotation as R  
 
+
+def extract_state_matrix(ann: Dict[str, Any]):
+    if 'states' in ann and len(ann['states']) > 0:
+        return np.array(ann['states'])
+
+    if 'observation.state.cartesian_position' in ann and 'observation.state.gripper_position' in ann:
+        cartesian = np.array(ann['observation.state.cartesian_position'])
+        gripper = np.array(ann['observation.state.gripper_position'])
+        if gripper.ndim == 1:
+            gripper = gripper[..., np.newaxis]
+        return np.concatenate([cartesian, gripper], axis=-1)
+
+    required_keys = [
+        'observation.state.joint_position_arm_left',
+        'observation.state.gripper_position_left',
+        'observation.state.joint_position_arm_right',
+        'observation.state.gripper_position_right',
+        'observation.state.joint_position_torso',
+    ]
+    if all(key in ann for key in required_keys):
+        arm_left = np.array(ann['observation.state.joint_position_arm_left'])
+        grip_left = np.array(ann['observation.state.gripper_position_left'])
+        arm_right = np.array(ann['observation.state.joint_position_arm_right'])
+        grip_right = np.array(ann['observation.state.gripper_position_right'])
+        torso = np.array(ann['observation.state.joint_position_torso'])
+
+        if grip_left.ndim == 1:
+            grip_left = grip_left[..., np.newaxis]
+        if grip_right.ndim == 1:
+            grip_right = grip_right[..., np.newaxis]
+
+        return np.concatenate([arm_left, grip_left, arm_right, grip_right, torso], axis=-1)
+
+    return None
+
 def load_and_process_ann_file(data_root, ann_file, sequence_interval=1, start_interval=4, sequence_length=8):
     samples = []
     try:
         with open(f'{data_root}/{ann_file}', "r") as f:
             ann = json.load(f)
-    except:
-        print(f'skip {ann_file}')
+    except Exception as exc:
+        print(f'skip {ann_file}: {exc}')
         return samples
 
-    n_frames = ann['video_length']
+    state_matrix = extract_state_matrix(ann)
+    if state_matrix is None or state_matrix.shape[0] == 0:
+        print(f'skip {ann_file}: unsupported annotation format')
+        return samples
+
+    n_frames = min(ann.get('video_length', state_matrix.shape[0]), state_matrix.shape[0])
     traj_len = int(sequence_length*sequence_interval)
     end_idx = n_frames - int(traj_len*0.5)
     if end_idx < 1:
@@ -38,7 +78,7 @@ def load_and_process_ann_file(data_root, ann_file, sequence_interval=1, start_in
         sample = dict()
         sample['episode_id'] = ann['episode_id']
         sample['frame_ids'] = [idx]
-        sample['states'] = np.array(ann['states'])[idx:idx+1]
+        sample['states'] = state_matrix[idx:idx+1]
         samples.append(sample)
     return samples
 
@@ -66,8 +106,9 @@ if __name__ == "__main__":
     parser.add_argument('--debug', action='store_true')
     args = parser.parse_args()
     
-    ########################### xhand datasets ###########################
+    ########################### dataset statistics ###########################
     sequence_length = 8
+    combined_states = []
     for data_type in ['val', 'train']:
         samples_all = []
         ann_files_all = []
@@ -79,39 +120,23 @@ if __name__ == "__main__":
         ann_dir = f'annotation/{data_type}'
         ann_files = init_anns(data_root, ann_dir)
         ann_files_all.extend(ann_files)
-        samples = init_sequences(data_root, ann_files,sequence_interval, start_interval, sequence_length)
+        samples = init_sequences(data_root, ann_files, sequence_interval, start_interval, sequence_length)
         print(f'{data_root} {len(samples)} samples')
         samples_all.extend(samples)
-        
-        # calculate the 1% and 99% of the action and state
-        print("########################### state ###########################")
-        # print(np.array(samples_all[0]['actions']).shape)
-        # print(np.array(samples_all[0]['states']).shape)
-        # # state_all = [samples['states'] for samples in samples_all]
-        # state_all = []
-        # for samples in samples_all:
-        #     state = np.array(samples['states']).squeeze(0)
-        #     state_all.append(state)
 
-        # state_all = np.array(state_all)
-        # print(state_all.shape)
-        # state_all = state_all.reshape(-1, state_all.shape[-1])
-        # # caculate the 1% and 99% of the action and state
-        # state_01 = np.percentile(state_all, 1, axis=0)
-        # state_99 = np.percentile(state_all, 99, axis=0)
-        # print('state_01:', state_01)
-        # print('state_99:', state_99)
-        # stat = {
-        #     'state_01': state_01.tolist(),
-        #     'state_99': state_99.tolist(),
-        # }
-        # with open(f'dataset_meta_info{dataset_name}/stat.json', 'w') as f:
-        #     json.dump(stat, f)
-
+        # accumulate state statistics
+        state_vectors = []
+        for sample in samples:
+            state_arr = np.array(sample['states'])
+            state_arr = state_arr.reshape(-1, state_arr.shape[-1])
+            state_vectors.append(state_arr)
+        if len(state_vectors) > 0:
+            combined_states.append(np.concatenate(state_vectors, axis=0))
         
         # dataset meta info
-        for samples in samples_all:
-            del samples['states']
+        for sample in samples_all:
+            if 'states' in sample:
+                del sample['states']
         import random
         random.shuffle(samples_all)
         print('step_num',data_type,len(samples_all))
@@ -119,4 +144,19 @@ if __name__ == "__main__":
         os.makedirs(f'dataset_meta_info/{dataset_name}', exist_ok=True)
         with open(f'dataset_meta_info/{dataset_name}/{data_type}_sample.json', 'w') as f:
             json.dump(samples_all, f, indent=4)
+
+    if len(combined_states) > 0:
+        state_all = np.concatenate(combined_states, axis=0)
+        state_01 = np.percentile(state_all, 1, axis=0)
+        state_99 = np.percentile(state_all, 99, axis=0)
+        stat = {
+            'state_01': state_01.tolist(),
+            'state_99': state_99.tolist(),
+        }
+        os.makedirs(f'dataset_meta_info/{args.dataset_name}', exist_ok=True)
+        with open(f'dataset_meta_info/{args.dataset_name}/stat.json', 'w') as f:
+            json.dump(stat, f, indent=4)
+        print('Saved normalization statistics to', f'dataset_meta_info/{args.dataset_name}/stat.json')
+    else:
+        print('Warning: no state statistics were collected; stat.json will not be generated.')
         
