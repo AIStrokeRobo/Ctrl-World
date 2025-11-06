@@ -159,16 +159,39 @@ def validate_video_generation(model, val_dataset, args, train_steps, videos_dir,
     videos_col = 2
 
     # sample from val dataset
-    batch_id = list(range(0,len(val_dataset),int(len(val_dataset)/videos_row/videos_col)))
-    batch_id = batch_id[int(id*(videos_col)):int((id+1)*(videos_col))]
-    batch_list = [val_dataset.__getitem__(id) for id in batch_id]
+    total_samples = len(val_dataset)
+    if total_samples == 0:
+        raise ValueError("Validation dataset is empty; unable to generate videos.")
+    step = max(total_samples // max(videos_row * videos_col, 1), 1)
+    candidate_indices = list(range(0, total_samples, step))
+    if not candidate_indices:
+        candidate_indices = [0]
+    start = int(id * videos_col)
+    end = int((id + 1) * videos_col)
+    selected_indices = candidate_indices[start:end]
+    if len(selected_indices) < videos_col:
+        selected_indices.extend([candidate_indices[-1]] * (videos_col - len(selected_indices)))
+    batch_list = [val_dataset.__getitem__(idx % total_samples) for idx in selected_indices]
+
+    view_count = batch_list[0].get('view_count', 1)
+    if any(sample.get('view_count', view_count) != view_count for sample in batch_list):
+        raise ValueError("Samples in validation batch have inconsistent view counts.")
+    if view_count <= 0:
+        raise ValueError("Invalid view_count detected in validation batch.")
+    total_latent_height = batch_list[0]['latent'].shape[-2]
+    view_height = batch_list[0].get('latent_view_height', None)
+    if view_height is None:
+        if total_latent_height % view_count != 0:
+            raise ValueError("Latent height is not divisible by view count; cannot reshape views.")
+        view_height = total_latent_height // view_count
+
     video_gt = torch.cat([t['latent'].unsqueeze(0) for i,t in enumerate(batch_list)],dim=0).to(device, non_blocking=True)
     text = [t['text'] for i,t in enumerate(batch_list)]
     actions = torch.cat([t['action'].unsqueeze(0) for i,t in enumerate(batch_list)],dim=0).to(device, non_blocking=True)
     his_latent_gt, future_latent_ft = video_gt[:,:args.num_history], video_gt[:,args.num_history:]
     current_latent = future_latent_ft[:,0]
     print("image",current_latent.shape, 'action', actions.shape)
-    assert current_latent.shape[1:] == (4, 72, 40)
+    assert current_latent.shape[1] == 4
     assert actions.shape[1:] == (int(args.num_frames+args.num_history), args.action_dim)
 
     # start generate
@@ -197,9 +220,9 @@ def validate_video_generation(model, val_dataset, args, train_steps, videos_dir,
             his_cond_zero=args.his_cond_zero,
         )
     
-    pred_latents = einops.rearrange(pred_latents, 'b f c (m h) (n w) -> (b m n) f c h w', m=3,n=1) # (B, 8, 4, 32,32)
-    video_gt = torch.cat([his_latent_gt, future_latent_ft], dim=1) # (B, 8, 4, 32,32)
-    video_gt = einops.rearrange(video_gt, 'b f c (m h) (n w) -> (b m n) f c h w', m=3,n=1) # (B, 8, 4, 32,32)
+    pred_latents = einops.rearrange(pred_latents, 'b f c (m h) w -> (b m) f c h w', m=view_count, h=view_height)
+    video_gt = torch.cat([his_latent_gt, future_latent_ft], dim=1)
+    video_gt = einops.rearrange(video_gt, 'b f c (m h) w -> (b m) f c h w', m=view_count, h=view_height)
     
     # decode latent
     if video_gt.shape[2] != 3:  
